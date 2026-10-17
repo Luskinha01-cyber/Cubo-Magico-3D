@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-// --- Scene Setup ---
+// --- Configuração da Cena ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0d111a');
 
 const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(7.5, 6.2, 8.5);
 
-// Optimized WebGLRenderer with capped pixel ratio and default power preference
+// Renderizador WebGL otimizado com limite de proporção de pixel
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'default' });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -16,7 +16,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
 document.getElementById('app').appendChild(renderer.domElement);
 
-// --- Orbit Controls ---
+// --- Controles de Órbita ---
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.12;
@@ -24,19 +24,19 @@ controls.enablePan = false;
 controls.minDistance = 4;
 controls.maxDistance = 18;
 controls.target.set(0, 0, 0);
-controls.rotateSpeed = -1.0; // Natural object drag: drag right = rotate right, drag up = tilt to see top
+controls.rotateSpeed = -1.0; // Movimento natural do mouse: arrastar para direita = girar para direita
 
-// --- Render On Demand Engine (0% CPU when idle) ---
+// --- Motor de Renderização sob Demanda (0% de CPU quando ocioso) ---
 let renderRequested = false;
 
 function render() {
   renderRequested = false;
 
-  // controls.update() returns true only when camera is actively moving from damping/inertia
+  // controls.update() retorna true apenas se a câmera estiver em movimento devido ao amortecimento/inércia
   const controlsMoving = controls.update();
   renderer.render(scene, camera);
 
-  // Keep requesting frames only while controls are actively moving
+  // Continua solicitando quadros apenas enquanto os controles estiverem se movendo ativamente
   if (controlsMoving) {
     requestRender();
   }
@@ -49,15 +49,15 @@ function requestRender() {
   }
 }
 
-// Request render when user orbits or zooms camera
+// Solicita renderização ao girar a órbita ou usar o zoom da câmera
 controls.addEventListener('change', requestRender);
 
-// Pause renders completely when page/tab is hidden
+// Pausa a renderização completamente quando a página/aba for ocultada
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) requestRender();
 });
 
-// --- Lighting ---
+// --- Iluminação ---
 const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
 scene.add(ambientLight);
 
@@ -69,7 +69,7 @@ const fillLight = new THREE.DirectionalLight(0x60a5fa, 0.4);
 fillLight.position.set(-8, -6, -8);
 scene.add(fillLight);
 
-// --- GAN Logo Texture ---
+// --- Textura do Logo GAN ---
 function createGanLogoTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -103,14 +103,17 @@ function createGanLogoTexture() {
 
 const logoTexture = createGanLogoTexture();
 
-// --- Colors & Materials (Stickerless GAN Style) ---
+// --- Cores e Materiais (Estilo GAN Stickerless) ---
+// Esquema padrão BOY: Branco abaixo (-Y), Amarelo no topo (+Y), Vermelho (+X), Laranja (-X),
+// Verde na face frontal (+Z) e Azul na face traseira (-Z).
+// Com Branco abaixo (-Y) e Vermelho (+X), ao olhar para o Vermelho, o Verde (+Z) fica à sua DIREITA!
 const FACE_COLORS = {
-  R: 0xef4444, // Red
-  L: 0xf97316, // Orange
-  U: 0xfacc15, // Yellow
-  D: 0xffffff, // White
-  F: 0x22c55e, // Green
-  B: 0x3b82f6  // Blue
+  R: 0xef4444, // Vermelho (+X)
+  L: 0xf97316, // Laranja (-X)
+  U: 0xfacc15, // Amarelo (+Y)
+  D: 0xffffff, // Branco (-Y)
+  F: 0x3b82f6, // Azul (+Z)
+  B: 0x22c55e  // Verde (-Z)
 };
 
 const materialMap = {
@@ -124,7 +127,7 @@ const materialMap = {
   BLACK: new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.75, metalness: 0.05 })
 };
 
-// --- Cube Construction ---
+// --- Construção do Cubo ---
 const CUBE_SIZE = 0.96;
 const GAP = 1.02;
 const TILE_THICKNESS = 0.04;
@@ -136,7 +139,7 @@ scene.add(cubeGroup);
 let cubies = [];
 let interactiveTiles = [];
 
-// Low-poly rounded rectangle tile geometry (optimized curveSegments to cut polygon count by 75%)
+// Geometria de azulejo arredondado (curvas otimizadas para reduzir contagem de polígonos)
 function createRoundedTileGeometry(w, h, r) {
   const shape = new THREE.Shape();
   const x = -w / 2, y = -h / 2;
@@ -152,7 +155,7 @@ function createRoundedTileGeometry(w, h, r) {
 
   const extrudeSettings = {
     depth: TILE_THICKNESS,
-    curveSegments: 3, // Highly optimized: reduces vertex count drastically
+    curveSegments: 3, // Otimizado: reduz drasticamente a contagem de vértices
     bevelEnabled: true,
     bevelSegments: 1,
     steps: 1,
@@ -177,7 +180,7 @@ function buildCube() {
   for (let x = -1; x <= 1; x++) {
     for (let y = -1; y <= 1; y++) {
       for (let z = -1; z <= 1; z++) {
-        // Skip hidden central core cubie (0,0,0) for performance
+        // Pula o cubo central interno invisível (0,0,0) por desempenho
         if (x === 0 && y === 0 && z === 0) continue;
 
         const cubie = new THREE.Group();
@@ -226,7 +229,7 @@ function buildCube() {
 
 buildCube();
 
-// --- Rotation & Game State ---
+// --- Estado de Rotação e do Jogo ---
 let isRotating = false;
 let moveCount = 0;
 let moveHistory = [];
@@ -258,8 +261,8 @@ function resetTimer() {
   document.getElementById('timer').innerHTML = `Tempo: <strong>00:00</strong>`;
 }
 
-// --- Unified Slice & Rotation Engine ---
-// Supports: single slice (-1, 0, 1), slice ranges, or whole-cube rotations [-1, 0, 1]
+// --- Motor Unificado de Rotação de Fatias e do Cubo ---
+// Suporta: fatia única (-1, 0, 1), intervalos de fatias ou rotação do cubo inteiro [-1, 0, 1]
 function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) {
   if (isRotating && recordHistory) return Promise.resolve();
   isRotating = true;
@@ -271,7 +274,7 @@ function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) 
   const sliceArray = Array.isArray(slices) ? slices : [slices];
 
   return new Promise(resolve => {
-    // Select cubies in target slices
+    // Seleciona os cubinhos das fatias de destino
     const sliceCubies = cubies.filter(c =>
       sliceArray.some(val => Math.abs(c.position[axis] - val * GAP) < 0.2)
     );
@@ -290,7 +293,7 @@ function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) 
 
       pivot.rotation[axis] = angle * ease;
 
-      // Direct render during animation frame: high FPS without multiple competing rAF loops
+      // Renderização direta durante a animação: alta fluidez em 60/144 FPS
       renderer.render(scene, camera);
 
       if (progress < 1) {
@@ -321,7 +324,7 @@ function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) 
           updateStatsUI();
         }
 
-        // Render clean final frame and sleep
+        // Renderiza o quadro final perfeito e aguarda
         requestRender();
         resolve();
       }
@@ -331,9 +334,9 @@ function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) 
   });
 }
 
-// --- Complete Rubik's Cube Movement Definitions (WCA Standard) ---
+// --- Definições Completas de Movimentos do Cubo Mágico (Padrão WCA) ---
 const MOVE_DEFINITIONS = {
-  // Outer Faces
+  // Faces Externas
   U: { axis: 'y', slices: [1], defaultDir: -1, name: 'U (Superior)' },
   D: { axis: 'y', slices: [-1], defaultDir: 1, name: 'D (Inferior)' },
   L: { axis: 'x', slices: [-1], defaultDir: 1, name: 'L (Esquerda)' },
@@ -341,18 +344,18 @@ const MOVE_DEFINITIONS = {
   F: { axis: 'z', slices: [1], defaultDir: -1, name: 'F (Frontal)' },
   B: { axis: 'z', slices: [-1], defaultDir: 1, name: 'B (Traseira)' },
 
-  // Middle Slices
-  M: { axis: 'x', slices: [0], defaultDir: 1, name: 'M (Meio - igual a L)' },
-  E: { axis: 'y', slices: [0], defaultDir: 1, name: 'E (Equador - igual a D)' },
-  S: { axis: 'z', slices: [0], defaultDir: -1, name: 'S (Em pé - igual a F)' },
+  // Fatias do Meio
+  M: { axis: 'x', slices: [0], defaultDir: 1, name: 'M (Meio - segue L)' },
+  E: { axis: 'y', slices: [0], defaultDir: 1, name: 'E (Equador - segue D)' },
+  S: { axis: 'z', slices: [0], defaultDir: -1, name: 'S (Em pé - segue F)' },
 
-  // Whole Cube Rotations
+  // Rotações do Cubo Inteiro
   X: { axis: 'x', slices: [-1, 0, 1], defaultDir: -1, name: 'X (Giro Cubo R)' },
   Y: { axis: 'y', slices: [-1, 0, 1], defaultDir: -1, name: 'Y (Giro Cubo U)' },
   Z: { axis: 'z', slices: [-1, 0, 1], defaultDir: -1, name: 'Z (Giro Cubo F)' }
 };
 
-// Execute any standard move
+// Executa qualquer movimento padrão
 function executeMove(moveKey, isPrime = false, isDouble = false) {
   if (isRotating) return Promise.resolve();
   // Prevent tilting whole cube when view is locked with Yellow top / White bottom
@@ -372,7 +375,7 @@ function executeMove(moveKey, isPrime = false, isDouble = false) {
   return rotateSlice(config.axis, config.slices, angle, duration, true);
 }
 
-// --- Drag-to-Rotate Interaction (Direct 3D Piece Gesture) ---
+// --- Interação de Arrastar para Girar (Gesto Direto nas Peças 3D) ---
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let dragStartPointer = null;
@@ -388,7 +391,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
   raycaster.setFromCamera(mouse, camera);
-  // Optimized raycasting against exposed interactive tiles only
+  // Raycasting otimizado apenas nas peças externas interativas
   const intersects = raycaster.intersectObjects(interactiveTiles, false);
 
   if (intersects.length > 0) {
@@ -396,7 +399,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     const tile = hit.object;
     selectedCubie = tile.userData.cubie;
 
-    // Calculate exact outward face normal in world coordinates
+    // Calcula a normal exata da face em coordenadas globais (mundo)
     const worldNormal = tile.userData.faceNormal.clone().applyQuaternion(selectedCubie.quaternion).normalize();
     selectedNormal = new THREE.Vector3(
       Math.round(worldNormal.x),
@@ -433,9 +436,9 @@ renderer.domElement.addEventListener('pointermove', (e) => {
       const axisVector = new THREE.Vector3();
       axisVector[axisStr] = 1;
 
-      // Only evaluate rotation axes perpendicular to the clicked face normal
+      // Avalia apenas eixos de rotação perpendiculares à normal da face clicada
       if (Math.abs(axisVector.dot(selectedNormal)) < 0.1) {
-        // Tangent 3D direction that the face moves when rotated around axisVector
+        // Direção 3D tangente que a face percorre ao ser rotacionada em torno de axisVector
         const tangent3D = new THREE.Vector3().crossVectors(axisVector, selectedNormal).normalize();
 
         const p1 = selectedHitPoint.clone().project(camera);
@@ -450,7 +453,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
         if (Math.abs(dot) > maxDot) {
           maxDot = Math.abs(dot);
           bestAxis = axisStr;
-          // In Three.js coordinates, dot > 0 corresponds to positive rotation
+          // Nas coordenadas do Three.js, dot > 0 corresponde à rotação positiva
           chosenAngle = dot > 0 ? Math.PI / 2 : -Math.PI / 2;
         }
       }
@@ -482,7 +485,7 @@ const endPointer = (e) => {
 renderer.domElement.addEventListener('pointerup', endPointer);
 renderer.domElement.addEventListener('pointercancel', endPointer);
 
-// --- Face & Movement Buttons UI Controls ---
+// --- Controles de Interface: Botões de Faces e Movimentos ---
 document.querySelectorAll('.btn-face, .btn-slice, .btn-rot').forEach(btn => {
   btn.addEventListener('click', () => {
     const moveKey = btn.dataset.move;
@@ -508,7 +511,7 @@ if (doubleToggleBtn) {
   });
 }
 
-// --- Invert Mouse Control ---
+// --- Controle de Inversão de Arraste do Mouse ---
 let isMouseInverted = true;
 const invertMouseBtn = document.getElementById('btn-invert-mouse');
 if (invertMouseBtn) {
@@ -522,11 +525,11 @@ if (invertMouseBtn) {
   });
 }
 
-// --- View Lock: White Center Down, Yellow Center Up (Lateral movements only) ---
+// --- Trava de Visão: Centro Branco para Baixo, Amarelo para Cima (Apenas giros laterais) ---
 let isViewLocked = false;
-const LOCKED_POLAR_ANGLE = 1.08; // ~62 deg elevation looking cleanly onto Yellow top face and front/sides
+const LOCKED_POLAR_ANGLE = 1.08; // Elevação de ~62° olhando perfeitamente para o topo e laterais
 
-// Ensures the physical cube is oriented with White at -Y (down) and Yellow at +Y (up)
+// Garante que o cubo físico seja alinhado com o centro Branco em -Y (baixo) e Amarelo em +Y (cima)
 async function alignCubeCenters() {
   const whiteCenter = cubies.find(c =>
     c.userData.initialPos.x === 0 &&
@@ -539,22 +542,22 @@ async function alignCubeCenters() {
   const wy = Math.round(whiteCenter.position.y / GAP);
   const wz = Math.round(whiteCenter.position.z / GAP);
 
-  if (wy === -1) return; // Already at the bottom
+  if (wy === -1) return; // Já está na parte inferior
 
   if (wy === 1) {
-    // White is at top, flip 180 deg around X
+    // Branco está no topo, gira 180° no eixo X
     await rotateSlice('x', [-1, 0, 1], Math.PI, 160, false);
   } else if (wz === 1) {
-    // White is at front (+Z), rotate around X by Math.PI / 2
+    // Branco está na face frontal (+Z), gira 90° no eixo X
     await rotateSlice('x', [-1, 0, 1], Math.PI / 2, 160, false);
   } else if (wz === -1) {
-    // White is at back (-Z), rotate around X by -Math.PI / 2
+    // Branco está na face traseira (-Z), gira -90° no eixo X
     await rotateSlice('x', [-1, 0, 1], -Math.PI / 2, 160, false);
   } else if (wx === 1) {
-    // White is at right (+X), rotate around Z by -Math.PI / 2
+    // Branco está na direita (+X), gira -90° no eixo Z
     await rotateSlice('z', [-1, 0, 1], -Math.PI / 2, 160, false);
   } else if (wx === -1) {
-    // White is at left (-X), rotate around Z by Math.PI / 2
+    // Branco está na esquerda (-X), gira 90° no eixo Z
     await rotateSlice('z', [-1, 0, 1], Math.PI / 2, 160, false);
   }
 }
@@ -575,10 +578,10 @@ async function toggleViewLock() {
   }
 
   if (isViewLocked) {
-    // Realign physical cube if needed so White is strictly bottom and Yellow strictly top
+    // Realinha o cubo físico se necessário para que o Branco fique na base e o Amarelo no topo
     await alignCubeCenters();
 
-    // Smoothly animate camera polar angle to LOCKED_POLAR_ANGLE (~62 deg)
+    // Animação suave do ângulo polar da câmera para o LOCKED_POLAR_ANGLE (~62 graus)
     const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
     const startPhi = Math.acos(Math.max(-1, Math.min(1, offset.y / offset.length())));
     const startTime = performance.now();
@@ -606,14 +609,14 @@ async function toggleViewLock() {
     }
     requestAnimationFrame(stepLock);
   } else {
-    // Unlock vertical pitch rotation completely
+    // Libera rotação vertical (pitch) da câmera completamente
     controls.minPolarAngle = 0.05;
     controls.maxPolarAngle = Math.PI - 0.05;
     requestRender();
   }
 }
 
-// --- Keyboard Controls (WCA Notation & Modifiers) ---
+// --- Controles de Teclado (Notação WCA e Modificadores) ---
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
@@ -623,7 +626,7 @@ window.addEventListener('keydown', (e) => {
     const isPrime = e.shiftKey || isPrimeToggle;
     executeMove(key, isPrime, isDoubleToggle);
 
-    // Provide visual feedback on corresponding button
+    // Feedback visual instantâneo no botão correspondente da interface
     const btn = document.querySelector(`[data-move="${key}"]`);
     if (btn) {
       btn.style.transform = 'scale(0.92)';
@@ -641,7 +644,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// --- Action Buttons (Scramble, Solve, Reset, Lock View) ---
+// --- Botões de Ação (Embaralhar, Resolver, Reiniciar, Travar Visão) ---
 async function scrambleCube() {
   if (isRotating) return;
 
@@ -694,7 +697,7 @@ document.getElementById('btn-scramble').addEventListener('click', scrambleCube);
 document.getElementById('btn-solve').addEventListener('click', solveCube);
 document.getElementById('btn-reset').addEventListener('click', resetCube);
 
-// --- Window Resize ---
+// --- Redimensionamento da Janela ---
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -702,5 +705,5 @@ window.addEventListener('resize', () => {
   requestRender();
 });
 
-// Initial render call
+// Chamada de renderização inicial
 requestRender();
