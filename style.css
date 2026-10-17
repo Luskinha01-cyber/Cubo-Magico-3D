@@ -74,6 +74,23 @@ body {
   flex-wrap: wrap;
 }
 
+.title-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.title-cube-icon {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 8px rgba(0, 242, 254, 0.35));
+  transition: transform 0.25s ease;
+}
+
+.title-wrapper:hover .title-cube-icon {
+  transform: rotate(12deg) scale(1.1);
+}
+
 h1 {
   font-size: 1.8rem;
   font-weight: 700;
