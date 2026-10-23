@@ -138,6 +138,13 @@ scene.add(cubeGroup);
 
 let cubies = [];
 let interactiveTiles = [];
+let activePivot = null;
+let currentAnimFrameId = null;
+let moveQueue = [];
+let isProcessingQueue = false;
+let isScrambling = false;
+let isSolving = false;
+let isTogglingLock = false;
 
 // Geometria de azulejo arredondado (curvas otimizadas para reduzir contagem de polígonos)
 function createRoundedTileGeometry(w, h, r) {
@@ -171,11 +178,11 @@ tileGeometry.center();
 const innerBoxGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
 
 function buildCube() {
-  if (typeof currentAnimFrameId !== 'undefined' && currentAnimFrameId) {
+  if (currentAnimFrameId) {
     cancelAnimationFrame(currentAnimFrameId);
     currentAnimFrameId = null;
   }
-  if (typeof activePivot !== 'undefined' && activePivot) {
+  if (activePivot) {
     while (activePivot.children.length > 0) {
       activePivot.remove(activePivot.children[0]);
     }
@@ -325,13 +332,6 @@ function stabilizeAllCubies() {
 }
 
 // --- Fila Segura de Movimentos (FIFO Move Queue com Duração Adaptativa) ---
-let moveQueue = [];
-let isProcessingQueue = false;
-let activePivot = null;
-let currentAnimFrameId = null;
-let isScrambling = false;
-let isSolving = false;
-let isTogglingLock = false;
 
 function enqueueMove(moveData) {
   // Limite preventivo para evitar acúmulo excessivo de comandos caso teclas sejam 'espancadas'
