@@ -171,6 +171,17 @@ tileGeometry.center();
 const innerBoxGeometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
 
 function buildCube() {
+  if (typeof currentAnimFrameId !== 'undefined' && currentAnimFrameId) {
+    cancelAnimationFrame(currentAnimFrameId);
+    currentAnimFrameId = null;
+  }
+  if (typeof activePivot !== 'undefined' && activePivot) {
+    while (activePivot.children.length > 0) {
+      activePivot.remove(activePivot.children[0]);
+    }
+    scene.remove(activePivot);
+    activePivot = null;
+  }
   while (cubeGroup.children.length > 0) {
     cubeGroup.remove(cubeGroup.children[0]);
   }
@@ -229,8 +240,7 @@ function buildCube() {
 
 buildCube();
 
-// --- Estado de Rotação e do Jogo ---
-let isRotating = false;
+// --- Estado do Jogo e Estatísticas ---
 let moveCount = 0;
 let moveHistory = [];
 let timerInterval = null;
@@ -261,30 +271,145 @@ function resetTimer() {
   document.getElementById('timer').innerHTML = `Tempo: <strong>00:00</strong>`;
 }
 
-// --- Motor Unificado de Rotação de Fatias e do Cubo ---
-// Suporta: fatia única (-1, 0, 1), intervalos de fatias ou rotação do cubo inteiro [-1, 0, 1]
-function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) {
-  if (isRotating && recordHistory) return Promise.resolve();
-  isRotating = true;
+// --- Quantização Matemática e Estabilização dos Cubinhos (À Prova de Drift) ---
+function snapBasisVector(v) {
+  const ax = Math.abs(v.x);
+  const ay = Math.abs(v.y);
+  const az = Math.abs(v.z);
+  if (ax >= ay && ax >= az) {
+    return new THREE.Vector3(Math.sign(v.x) || 1, 0, 0);
+  } else if (ay >= ax && ay >= az) {
+    return new THREE.Vector3(0, Math.sign(v.y) || 1, 0);
+  } else {
+    return new THREE.Vector3(0, 0, Math.sign(v.z) || 1);
+  }
+}
 
-  if (recordHistory && moveCount === 0) {
-    startTimer();
+// Projeta e quantiza a orientação exata na base ortonormal discreta da simetria do cubo
+function snapCubieOrientation(c) {
+  const m = new THREE.Matrix4().makeRotationFromQuaternion(c.quaternion);
+  const e = m.elements;
+  const vx = new THREE.Vector3(e[0], e[1], e[2]);
+  const vy = new THREE.Vector3(e[4], e[5], e[6]);
+
+  const sx = snapBasisVector(vx);
+  vy.sub(sx.clone().multiplyScalar(vy.dot(sx)));
+  const sy = snapBasisVector(vy);
+  const sz = new THREE.Vector3().crossVectors(sx, sy);
+
+  const snappedMatrix = new THREE.Matrix4().makeBasis(sx, sy, sz);
+  c.quaternion.setFromRotationMatrix(snappedMatrix);
+  c.rotation.setFromQuaternion(c.quaternion);
+}
+
+// Garante que todos os 26 cubinhos estejam fixados corretamente ao cubeGroup com coordenadas perfeitas
+function stabilizeAllCubies() {
+  if (activePivot) {
+    while (activePivot.children.length > 0) {
+      cubeGroup.attach(activePivot.children[0]);
+    }
+    scene.remove(activePivot);
+    activePivot = null;
   }
 
-  const sliceArray = Array.isArray(slices) ? slices : [slices];
+  cubies.forEach(c => {
+    if (c.parent !== cubeGroup) {
+      cubeGroup.attach(c);
+    }
+    c.position.x = Math.round(c.position.x / GAP) * GAP;
+    c.position.y = Math.round(c.position.y / GAP) * GAP;
+    c.position.z = Math.round(c.position.z / GAP) * GAP;
+    snapCubieOrientation(c);
+    c.updateMatrixWorld(true);
+  });
+}
+
+// --- Fila Segura de Movimentos (FIFO Move Queue com Duração Adaptativa) ---
+let moveQueue = [];
+let isProcessingQueue = false;
+let activePivot = null;
+let currentAnimFrameId = null;
+let isScrambling = false;
+let isSolving = false;
+let isTogglingLock = false;
+
+function enqueueMove(moveData) {
+  // Limite preventivo para evitar acúmulo excessivo de comandos caso teclas sejam 'espancadas'
+  if (moveQueue.length > 30 && !moveData.force) {
+    return Promise.resolve();
+  }
 
   return new Promise(resolve => {
-    // Seleciona os cubinhos das fatias de destino
-    const sliceCubies = cubies.filter(c =>
-      sliceArray.some(val => Math.abs(c.position[axis] - val * GAP) < 0.2)
-    );
+    moveQueue.push({ ...moveData, resolve });
+    processMoveQueue();
+  });
+}
+
+async function processMoveQueue() {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  try {
+    while (moveQueue.length > 0) {
+      const task = moveQueue.shift();
+
+      // Ajuste de velocidade adaptativo: se houver movimentos acumulados, acelera para resposta instantânea
+      let duration = task.duration;
+      if (duration === undefined) {
+        if (moveQueue.length > 6) {
+          duration = 40;
+        } else if (moveQueue.length > 2) {
+          duration = 75;
+        } else if (moveQueue.length > 0) {
+          duration = 110;
+        } else {
+          duration = 160;
+        }
+      }
+
+      await rotateSliceAsync(task.axis, task.slices, task.angle, duration, task.recordHistory, task.isAlignment);
+      if (task.resolve) task.resolve();
+    }
+  } catch (err) {
+    console.error('Erro na rotação do cubo:', err);
+    stabilizeAllCubies();
+  } finally {
+    isProcessingQueue = false;
+  }
+}
+
+// Execução assíncrona e estritamente atômica de uma rotação
+function rotateSliceAsync(axis, slices, angle, targetDuration = 160, recordHistory = true, isAlignment = false) {
+  return new Promise(resolve => {
+    stabilizeAllCubies();
+
+    if (recordHistory && moveCount === 0 && !isAlignment) {
+      startTimer();
+    }
+
+    const sliceArray = Array.isArray(slices) ? slices : [slices];
+    const targetSet = new Set(sliceArray);
+
+    // Seleção robusta por coordenada de grade inteira (independente de erros de ponto flutuante)
+    const sliceCubies = cubies.filter(c => {
+      const gridVal = Math.round(c.position[axis] / GAP);
+      return targetSet.has(gridVal);
+    });
+
+    if (sliceCubies.length === 0) {
+      resolve();
+      return;
+    }
 
     const pivot = new THREE.Group();
+    pivot.userData = { isPivot: true };
+    activePivot = pivot;
     scene.add(pivot);
 
     sliceCubies.forEach(c => pivot.attach(c));
 
     const startTime = performance.now();
+    const duration = Math.max(25, targetDuration);
 
     function animate(now) {
       const elapsed = now - startTime;
@@ -292,45 +417,52 @@ function rotateSlice(axis, slices, angle, duration = 180, recordHistory = true) 
       const ease = 1 - Math.pow(1 - progress, 3);
 
       pivot.rotation[axis] = angle * ease;
-
-      // Renderização direta durante a animação: alta fluidez em 60/144 FPS
       renderer.render(scene, camera);
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        currentAnimFrameId = requestAnimationFrame(animate);
       } else {
+        currentAnimFrameId = null;
         pivot.rotation[axis] = angle;
         pivot.updateMatrixWorld(true);
 
-        const halfPi = Math.PI / 2;
         sliceCubies.forEach(c => {
           cubeGroup.attach(c);
           c.position.x = Math.round(c.position.x / GAP) * GAP;
           c.position.y = Math.round(c.position.y / GAP) * GAP;
           c.position.z = Math.round(c.position.z / GAP) * GAP;
-
-          c.rotation.x = Math.round(c.rotation.x / halfPi) * halfPi;
-          c.rotation.y = Math.round(c.rotation.y / halfPi) * halfPi;
-          c.rotation.z = Math.round(c.rotation.z / halfPi) * halfPi;
+          snapCubieOrientation(c);
           c.updateMatrixWorld(true);
         });
 
         scene.remove(pivot);
-        isRotating = false;
+        activePivot = null;
 
         if (recordHistory) {
-          moveCount++;
+          if (!isAlignment) {
+            moveCount++;
+            updateStatsUI();
+          }
           moveHistory.push({ axis, slices: sliceArray, angle });
-          updateStatsUI();
         }
 
-        // Renderiza o quadro final perfeito e aguarda
         requestRender();
         resolve();
       }
     }
 
-    requestAnimationFrame(animate);
+    currentAnimFrameId = requestAnimationFrame(animate);
+  });
+}
+
+// Wrapper retrocompatível para chamadas diretas
+function rotateSlice(axis, slices, angle, duration = 160, recordHistory = true) {
+  return enqueueMove({
+    axis,
+    slices: Array.isArray(slices) ? slices : [slices],
+    angle,
+    duration,
+    recordHistory
   });
 }
 
@@ -355,10 +487,9 @@ const MOVE_DEFINITIONS = {
   Z: { axis: 'z', slices: [-1, 0, 1], defaultDir: -1, name: 'Z (Giro Cubo F)' }
 };
 
-// Executa qualquer movimento padrão
+// Executa qualquer movimento padrão através da fila
 function executeMove(moveKey, isPrime = false, isDouble = false) {
-  if (isRotating) return Promise.resolve();
-  // Prevent tilting whole cube when view is locked with Yellow top / White bottom
+  // Evita inclinar o cubo todo caso a visão esteja travada com Amarelo no topo / Branco na base
   if (isViewLocked && (moveKey === 'X' || moveKey === 'Z')) {
     return Promise.resolve();
   }
@@ -371,8 +502,14 @@ function executeMove(moveKey, isPrime = false, isDouble = false) {
     angle *= 2;
   }
 
-  const duration = isDouble ? 240 : 180;
-  return rotateSlice(config.axis, config.slices, angle, duration, true);
+  const duration = isDouble ? 220 : undefined;
+  return enqueueMove({
+    axis: config.axis,
+    slices: config.slices,
+    angle: angle,
+    duration: duration,
+    recordHistory: true
+  });
 }
 
 // --- Interação de Arrastar para Girar (Gesto Direto nas Peças 3D) ---
@@ -385,13 +522,12 @@ let selectedHitPoint = null;
 let isDraggingFace = false;
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (isRotating) return;
+  if (isProcessingQueue || activePivot || moveQueue.length > 0) return;
 
   mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
   raycaster.setFromCamera(mouse, camera);
-  // Raycasting otimizado apenas nas peças externas interativas
   const intersects = raycaster.intersectObjects(interactiveTiles, false);
 
   if (intersects.length > 0) {
@@ -399,7 +535,6 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
     const tile = hit.object;
     selectedCubie = tile.userData.cubie;
 
-    // Calcula a normal exata da face em coordenadas globais (mundo)
     const worldNormal = tile.userData.faceNormal.clone().applyQuaternion(selectedCubie.quaternion).normalize();
     selectedNormal = new THREE.Vector3(
       Math.round(worldNormal.x),
@@ -417,7 +552,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (!dragStartPointer || isDraggingFace || isRotating || !selectedCubie || !selectedNormal) return;
+  if (!dragStartPointer || isDraggingFace || isProcessingQueue || activePivot || !selectedCubie || !selectedNormal) return;
 
   const dx = e.clientX - dragStartPointer.x;
   const dy = e.clientY - dragStartPointer.y;
@@ -436,9 +571,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
       const axisVector = new THREE.Vector3();
       axisVector[axisStr] = 1;
 
-      // Avalia apenas eixos de rotação perpendiculares à normal da face clicada
       if (Math.abs(axisVector.dot(selectedNormal)) < 0.1) {
-        // Direção 3D tangente que a face percorre ao ser rotacionada em torno de axisVector
         const tangent3D = new THREE.Vector3().crossVectors(axisVector, selectedNormal).normalize();
 
         const p1 = selectedHitPoint.clone().project(camera);
@@ -453,7 +586,6 @@ renderer.domElement.addEventListener('pointermove', (e) => {
         if (Math.abs(dot) > maxDot) {
           maxDot = Math.abs(dot);
           bestAxis = axisStr;
-          // Nas coordenadas do Three.js, dot > 0 corresponde à rotação positiva
           chosenAngle = dot > 0 ? Math.PI / 2 : -Math.PI / 2;
         }
       }
@@ -461,7 +593,13 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 
     if (bestAxis) {
       const sliceVal = Math.round(selectedCubie.position[bestAxis] / GAP);
-      rotateSlice(bestAxis, [sliceVal], chosenAngle);
+      enqueueMove({
+        axis: bestAxis,
+        slices: [sliceVal],
+        angle: chosenAngle,
+        duration: 160,
+        recordHistory: true
+      });
     }
 
     dragStartPointer = null;
@@ -525,12 +663,17 @@ if (invertMouseBtn) {
   });
 }
 
-// --- Trava de Visão: Centro Branco para Baixo, Amarelo para Cima (Apenas giros laterais) ---
+// --- Trava de Visão: Centro Branco para Baixo, Amarelo para Cima ---
 let isViewLocked = false;
-const LOCKED_POLAR_ANGLE = 1.08; // Elevação de ~62° olhando perfeitamente para o topo e laterais
+const LOCKED_POLAR_ANGLE = 1.08;
 
 // Garante que o cubo físico seja alinhado com o centro Branco em -Y (baixo) e Amarelo em +Y (cima)
 async function alignCubeCenters() {
+  while (moveQueue.length > 0 || isProcessingQueue) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  stabilizeAllCubies();
+
   const whiteCenter = cubies.find(c =>
     c.userData.initialPos.x === 0 &&
     c.userData.initialPos.y === -1 &&
@@ -544,81 +687,89 @@ async function alignCubeCenters() {
 
   if (wy === -1) return; // Já está na parte inferior
 
+  let alignMove = null;
   if (wy === 1) {
-    // Branco está no topo, gira 180° no eixo X
-    await rotateSlice('x', [-1, 0, 1], Math.PI, 160, false);
+    alignMove = { axis: 'x', slices: [-1, 0, 1], angle: Math.PI, duration: 150, recordHistory: true, isAlignment: true };
   } else if (wz === 1) {
-    // Branco está na face frontal (+Z), gira 90° no eixo X
-    await rotateSlice('x', [-1, 0, 1], Math.PI / 2, 160, false);
+    alignMove = { axis: 'x', slices: [-1, 0, 1], angle: Math.PI / 2, duration: 150, recordHistory: true, isAlignment: true };
   } else if (wz === -1) {
-    // Branco está na face traseira (-Z), gira -90° no eixo X
-    await rotateSlice('x', [-1, 0, 1], -Math.PI / 2, 160, false);
+    alignMove = { axis: 'x', slices: [-1, 0, 1], angle: -Math.PI / 2, duration: 150, recordHistory: true, isAlignment: true };
   } else if (wx === 1) {
-    // Branco está na direita (+X), gira -90° no eixo Z
-    await rotateSlice('z', [-1, 0, 1], -Math.PI / 2, 160, false);
+    alignMove = { axis: 'z', slices: [-1, 0, 1], angle: -Math.PI / 2, duration: 150, recordHistory: true, isAlignment: true };
   } else if (wx === -1) {
-    // Branco está na esquerda (-X), gira 90° no eixo Z
-    await rotateSlice('z', [-1, 0, 1], Math.PI / 2, 160, false);
+    alignMove = { axis: 'z', slices: [-1, 0, 1], angle: Math.PI / 2, duration: 150, recordHistory: true, isAlignment: true };
+  }
+
+  if (alignMove) {
+    await enqueueMove({ ...alignMove, force: true });
   }
 }
 
 async function toggleViewLock() {
-  isViewLocked = !isViewLocked;
-  const lockBtn = document.getElementById('btn-lock-view');
+  if (isTogglingLock) return;
+  isTogglingLock = true;
 
-  if (lockBtn) {
-    lockBtn.classList.toggle('active', isViewLocked);
-    const textSpan = lockBtn.querySelector('.btn-text');
-    if (textSpan) {
-      textSpan.textContent = isViewLocked ? 'Destravar Visão' : 'Travar Visão';
-    }
-    lockBtn.title = isViewLocked
-      ? 'Visão travada: Centro branco para baixo (apenas giros laterais). Clique para destravar.'
-      : 'Travar visão: Amarelo no topo e Branco na base (permite apenas giros laterais) [Tecla T]';
-  }
+  try {
+    isViewLocked = !isViewLocked;
+    const lockBtn = document.getElementById('btn-lock-view');
 
-  if (isViewLocked) {
-    // Realinha o cubo físico se necessário para que o Branco fique na base e o Amarelo no topo
-    await alignCubeCenters();
-
-    // Animação suave do ângulo polar da câmera para o LOCKED_POLAR_ANGLE (~62 graus)
-    const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
-    const startPhi = Math.acos(Math.max(-1, Math.min(1, offset.y / offset.length())));
-    const startTime = performance.now();
-    const duration = 240;
-
-    function stepLock(now) {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const ease = 1 - Math.pow(1 - progress, 3);
-      const currentPhi = startPhi + (LOCKED_POLAR_ANGLE - startPhi) * ease;
-
-      controls.minPolarAngle = currentPhi;
-      controls.maxPolarAngle = currentPhi;
-      controls.update();
-      renderer.render(scene, camera);
-
-      if (progress < 1) {
-        requestAnimationFrame(stepLock);
-      } else {
-        controls.minPolarAngle = LOCKED_POLAR_ANGLE;
-        controls.maxPolarAngle = LOCKED_POLAR_ANGLE;
-        controls.update();
-        requestRender();
+    if (lockBtn) {
+      lockBtn.classList.toggle('active', isViewLocked);
+      const textSpan = lockBtn.querySelector('.btn-text');
+      if (textSpan) {
+        textSpan.textContent = isViewLocked ? 'Destravar Visão' : 'Travar Visão';
       }
+      lockBtn.title = isViewLocked
+        ? 'Visão travada: Centro branco para baixo (apenas giros laterais). Clique para destravar.'
+        : 'Travar visão: Amarelo no topo e Branco na base (permite apenas giros laterais) [Tecla T]';
     }
-    requestAnimationFrame(stepLock);
-  } else {
-    // Libera rotação vertical (pitch) da câmera completamente
-    controls.minPolarAngle = 0.05;
-    controls.maxPolarAngle = Math.PI - 0.05;
-    requestRender();
+
+    if (isViewLocked) {
+      await alignCubeCenters();
+
+      const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
+      const startPhi = Math.acos(Math.max(-1, Math.min(1, offset.y / offset.length())));
+      const startTime = performance.now();
+      const duration = 240;
+
+      await new Promise(resolve => {
+        function stepLock(now) {
+          const elapsed = now - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const ease = 1 - Math.pow(1 - progress, 3);
+          const currentPhi = startPhi + (LOCKED_POLAR_ANGLE - startPhi) * ease;
+
+          controls.minPolarAngle = currentPhi;
+          controls.maxPolarAngle = currentPhi;
+          controls.update();
+          renderer.render(scene, camera);
+
+          if (progress < 1) {
+            requestAnimationFrame(stepLock);
+          } else {
+            controls.minPolarAngle = LOCKED_POLAR_ANGLE;
+            controls.maxPolarAngle = LOCKED_POLAR_ANGLE;
+            controls.update();
+            requestRender();
+            resolve();
+          }
+        }
+        requestAnimationFrame(stepLock);
+      });
+    } else {
+      controls.minPolarAngle = 0.05;
+      controls.maxPolarAngle = Math.PI - 0.05;
+      requestRender();
+    }
+  } finally {
+    isTogglingLock = false;
   }
 }
 
 // --- Controles de Teclado (Notação WCA e Modificadores) ---
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.repeat) return; // Ignora repetição automática para evitar enfileiramento descontrolado
 
   const key = e.key.toUpperCase();
   if (MOVE_DEFINITIONS[key]) {
@@ -626,7 +777,6 @@ window.addEventListener('keydown', (e) => {
     const isPrime = e.shiftKey || isPrimeToggle;
     executeMove(key, isPrime, isDoubleToggle);
 
-    // Feedback visual instantâneo no botão correspondente da interface
     const btn = document.querySelector(`[data-move="${key}"]`);
     if (btn) {
       btn.style.transform = 'scale(0.92)';
@@ -646,37 +796,95 @@ window.addEventListener('keydown', (e) => {
 
 // --- Botões de Ação (Embaralhar, Resolver, Reiniciar, Travar Visão) ---
 async function scrambleCube() {
-  if (isRotating) return;
+  if (isScrambling || isSolving) return;
+  isScrambling = true;
+
+  if (currentAnimFrameId) {
+    cancelAnimationFrame(currentAnimFrameId);
+    currentAnimFrameId = null;
+  }
+  moveQueue = [];
+  stabilizeAllCubies();
 
   const moveKeys = ['U', 'D', 'L', 'R', 'F', 'B'];
   const dirs = [false, true];
 
+  const scramblePromises = [];
   for (let i = 0; i < 20; i++) {
     const key = moveKeys[Math.floor(Math.random() * moveKeys.length)];
     const isPrime = dirs[Math.floor(Math.random() * 2)];
     const isDouble = Math.random() < 0.25;
-    await executeMove(key, isPrime, isDouble);
+
+    const config = MOVE_DEFINITIONS[key];
+    const dirMultiplier = isPrime ? -1 : 1;
+    let angle = (Math.PI / 2) * config.defaultDir * dirMultiplier;
+    if (isDouble) angle *= 2;
+
+    scramblePromises.push(
+      enqueueMove({
+        axis: config.axis,
+        slices: config.slices,
+        angle: angle,
+        duration: 45,
+        recordHistory: true,
+        force: true
+      })
+    );
   }
+
+  await Promise.all(scramblePromises);
+  isScrambling = false;
 }
 
 async function solveCube() {
-  if (isRotating || moveHistory.length === 0) return;
+  if (isSolving || isScrambling || moveHistory.length === 0) return;
+  isSolving = true;
+
+  while (moveQueue.length > 0 || isProcessingQueue) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  stabilizeAllCubies();
 
   const historyCopy = [...moveHistory];
-  for (let i = historyCopy.length - 1; i >= 0; i--) {
-    const move = historyCopy[i];
-    await rotateSlice(move.axis, move.slices, -move.angle, 70, false);
-  }
-
   moveHistory = [];
   moveCount = 0;
   updateStatsUI();
   resetTimer();
+
+  const solvePromises = [];
+  for (let i = historyCopy.length - 1; i >= 0; i--) {
+    const move = historyCopy[i];
+    solvePromises.push(
+      enqueueMove({
+        axis: move.axis,
+        slices: move.slices,
+        angle: -move.angle,
+        duration: 50,
+        recordHistory: false,
+        force: true
+      })
+    );
+  }
+
+  await Promise.all(solvePromises);
+  isSolving = false;
 }
 
 function resetCube() {
-  if (isRotating) return;
+  if (currentAnimFrameId) {
+    cancelAnimationFrame(currentAnimFrameId);
+    currentAnimFrameId = null;
+  }
+
+  moveQueue = [];
+  isProcessingQueue = false;
+  isScrambling = false;
+  isSolving = false;
+  isTogglingLock = false;
+
+  stabilizeAllCubies();
   buildCube();
+
   moveHistory = [];
   moveCount = 0;
   updateStatsUI();
@@ -686,6 +894,7 @@ function resetCube() {
     controls.minPolarAngle = LOCKED_POLAR_ANGLE;
     controls.maxPolarAngle = LOCKED_POLAR_ANGLE;
   }
+  requestRender();
 }
 
 const lockViewBtn = document.getElementById('btn-lock-view');
